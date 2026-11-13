@@ -1,0 +1,6 @@
+station_id,station_name,line,zone,is_interchange
+S001,Central,RED,1,true
+S002,City_Market,RED,2,false
+S003,Park_Street,BLUE,3,true
+S004,Airport,BLUE,4,false
+S005,Tech_Park,GREEN,5,true

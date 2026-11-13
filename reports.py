@@ -24,9 +24,9 @@ def generate_journey_report(journeys, filename):
 
             writer.writerow({
                 "card_id": journey.card_id,
-                "entry_station": journey.entry_station.name,
+                "entry_station": journey.entry_station.station_name,
                 "exit_station": (
-                    journey.exit_station.name
+                    journey.exit_station.station_name
                     if journey.exit_station else ""
                 ),
                 "entry_time": journey.entry_time.isoformat(),
@@ -74,7 +74,7 @@ def generate_revenue_report(transactions, filename):
                 "other_revenue": 0
             }
 
-        if transaction.transaction_type == "FARE_OR_PENALTY":
+        if transaction.transaction_type == "FARE":
             revenue[station]["fare_revenue"] += transaction.amount
 
         elif transaction.transaction_type in {
@@ -85,7 +85,6 @@ def generate_revenue_report(transactions, filename):
 
         else:
             revenue[station]["other_revenue"] += transaction.amount
-
     with open(filename, "w", newline="", encoding="utf-8") as file:
 
         fields = [

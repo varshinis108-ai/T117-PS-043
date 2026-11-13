@@ -1,1 +1,3 @@
 card_id,entry_station,exit_station,entry_time,exit_time,fare,penalty,status
+C001,Central,City_Market,2026-11-12T08:30:00,2026-11-12T09:00:00,27,0,CLOSED
+C002,City_Market,Airport,2026-11-12T11:00:00,2026-11-12T11:35:00,12,0,CLOSED

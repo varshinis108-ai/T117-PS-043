@@ -1,5 +1,4 @@
 
-from datetime import datetime
 from decimal import Decimal
 
 from models import Transaction
@@ -103,6 +102,8 @@ class CardService:
         timestamp
     ):
 
+        plan = str(plan).upper()
+
         prices = {
             "1_DAY": Decimal("300"),
             "3_DAY": Decimal("700")
@@ -121,7 +122,6 @@ class CardService:
                 "Choose 1_DAY or 3_DAY"
             )
 
-        # Prevent duplicate purchases before activation
         if (
             card.pass_start_date is not None
             or card.tourist_plan is not None
@@ -165,13 +165,13 @@ class CardService:
                 "Card is already blocked or surrendered"
             )
 
-        # Save balance at exact block time
+        # Save the balance at the exact block time.
         card.balance_at_block = card.balance
 
         card.blocked_at = block_time
         card.validity = "BLOCKED"
 
-        # Stop future auto reloads
+        # Stop future automatic reloads.
         card.auto_reload_enabled = False
 
         print("CARD BLOCKED SUCCESSFULLY")
@@ -193,12 +193,9 @@ class CardService:
                 "Card has already been surrendered"
             )
 
-        if card.active_journey is not None:
-            raise ValueError(
-                "Close or reconcile the active journey first"
-            )
-
-        # Lost card refund
+        # A blocked card uses the balance saved
+        # when it was blocked. An open journey does
+        # not prevent this refund.
         if card.validity == "BLOCKED":
 
             if card.balance_at_block is None:
@@ -206,11 +203,23 @@ class CardService:
                     "Balance at block time is unavailable"
                 )
 
-            refund = card.balance_at_block
+            refund = Decimal(
+                str(card.balance_at_block)
+            )
 
-        # Normal surrender refund
+            # Discard any journey that was still open.
+            card.active_journey = None
+
+        # A normal active card cannot be surrendered
+        # while it has an unfinished journey.
         elif card.validity == "ACTIVE":
 
+            if card.active_journey is not None:
+                raise ValueError(
+                    "Close the active journey before surrendering"
+                )
+
+            # Retain the Rs 50 card deposit.
             refund = max(
                 Decimal("0"),
                 card.balance - Decimal("50")
@@ -219,10 +228,11 @@ class CardService:
         else:
             raise ValueError("Invalid card status")
 
-        # Clear card balance
+        # Complete the surrender.
         card.balance = Decimal("0")
         card.validity = "SURRENDERED"
         card.auto_reload_enabled = False
+        card.linked_account = None
 
         self.record_transaction(
             card,

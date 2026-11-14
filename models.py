@@ -18,6 +18,10 @@ class Station:
     zone: int
     is_interchange: bool = False
 
+    # Additional sample-dataset details
+    line_id: Optional[str] = None
+    interchange_line_id: Optional[str] = None
+
     def __post_init__(self):
 
         if not 1 <= self.zone <= 5:
@@ -58,6 +62,10 @@ class SmartCard:
     pass_start_date: Optional[date] = None
     pass_expiry: Optional[datetime] = None
 
+    # Additional sample-dataset details
+    issued_date: Optional[date] = None
+    pass_days: Optional[int] = None
+
     def __post_init__(self):
 
         allowed_types = {
@@ -66,6 +74,9 @@ class SmartCard:
             "SENIOR",
             "TOURIST_PASS"
         }
+
+        self.card_type = self.card_type.upper()
+        self.validity = self.validity.upper()
 
         if self.card_type not in allowed_types:
             raise ValueError("Invalid card type")
@@ -76,6 +87,21 @@ class SmartCard:
             raise ValueError(
                 "Initial balance cannot be negative"
             )
+
+        # Convert sample pass_days into the existing plan format.
+        if self.pass_days is not None:
+            self.pass_days = int(self.pass_days)
+
+            if self.pass_days not in {1, 3}:
+                raise ValueError(
+                    "Tourist pass must be for 1 or 3 days"
+                )
+
+            if self.tourist_plan is None:
+                self.tourist_plan = f"{self.pass_days}_DAY"
+
+        if self.tourist_plan is not None:
+            self.tourist_plan = self.tourist_plan.upper()
 
     # Minimum balance required for tap-in
     def minimum_balance(self):

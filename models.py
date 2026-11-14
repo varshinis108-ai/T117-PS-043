@@ -54,7 +54,7 @@ class SmartCard:
     monthly_spending: dict = field(default_factory=dict)
 
     # Tourist pass details
-    tourist_plan: str = "1_DAY"
+    tourist_plan: Optional[str] = None
     pass_start_date: Optional[date] = None
     pass_expiry: Optional[datetime] = None
 
@@ -94,6 +94,11 @@ class SmartCard:
         if self.card_type != "TOURIST_PASS":
             raise ValueError(
                 "This is not a tourist pass card"
+            )
+
+        if self.tourist_plan is None:
+            raise ValueError(
+                "Tourist pass has not been purchased"
             )
 
         if self.pass_start_date is not None:

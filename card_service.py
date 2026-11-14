@@ -8,7 +8,6 @@ from models import Transaction
 class CardService:
 
     def __init__(self):
-
         self.transactions = []
 
     # ==========================================
@@ -122,9 +121,13 @@ class CardService:
                 "Choose 1_DAY or 3_DAY"
             )
 
-        if card.pass_start_date is not None:
+        # Prevent duplicate purchases before activation
+        if (
+            card.pass_start_date is not None
+            or card.tourist_plan is not None
+        ):
             raise ValueError(
-                "Tourist pass already activated"
+                "Tourist pass already purchased or activated"
             )
 
         if card.balance < prices[plan]:
@@ -173,7 +176,9 @@ class CardService:
 
         print("CARD BLOCKED SUCCESSFULLY")
         print(f"Card ID: {card.card_id}")
-        print(f"Balance at block time: Rs {card.balance_at_block}")
+        print(
+            f"Balance at block time: Rs {card.balance_at_block}"
+        )
 
         return card.balance_at_block
 
@@ -216,9 +221,7 @@ class CardService:
 
         # Clear card balance
         card.balance = Decimal("0")
-
         card.validity = "SURRENDERED"
-
         card.auto_reload_enabled = False
 
         self.record_transaction(

@@ -1,11 +1,8 @@
-from datetime import date
+
 from decimal import Decimal
 
 from models import Journey, Transaction
-from fareengine import (
-    calculate_journey_fare,
-    calculate_penalty
-)
+from fareengine import calculate_journey_fare, calculate_penalty
 
 
 MAXIMUM_FARE = Decimal("55")
@@ -16,7 +13,6 @@ AUTO_RELOAD_FEE = Decimal("5")
 class EventProcessor:
 
     def __init__(self, cards, stations, holidays=None):
-
         self.cards = cards
         self.stations = stations
         self.holidays = holidays or set()
@@ -25,18 +21,25 @@ class EventProcessor:
         self.transactions = []
         self.rejected_events = []
 
-    # Reject invalid events
-    def reject(self, event, reason):
+    # ==========================================
+    # REJECT INVALID EVENTS
+    # ==========================================
 
+    def reject(self, event, reason):
         self.rejected_events.append({
             "event_id": event.event_id,
             "card_id": event.card_id,
             "reason": reason
         })
 
-        print(f"Event rejected: {reason}")
+        print(
+            f"EVENT REJECTED: {event.event_id} - {reason}"
+        )
 
-    # Record transactions
+    # ==========================================
+    # CHARGE CARD
+    # ==========================================
+
     def charge(
         self,
         card,
@@ -47,10 +50,14 @@ class EventProcessor:
     ):
 
         amount = Decimal(str(amount))
+
+        if amount <= 0:
+            return
+
         card.balance -= amount
 
         transaction = Transaction(
-            transaction_id=f"TXN{len(self.transactions)+1:05d}",
+            transaction_id=f"T{len(self.transactions) + 1:04d}",
             card_id=card.card_id,
             transaction_type=transaction_type,
             amount=amount,
@@ -61,7 +68,25 @@ class EventProcessor:
 
         self.transactions.append(transaction)
 
-    # STEP 14: TAP IN
+    # ==========================================
+    # PROCESS EVENT
+    # ==========================================
+
+    def process_event(self, event):
+
+        if event.event_type == "TAP_IN":
+            self.process_tap_in(event)
+
+        elif event.event_type == "TAP_OUT":
+            self.process_tap_out(event)
+
+        else:
+            self.reject(event, "INVALID_EVENT_TYPE")
+
+    # ==========================================
+    # TAP IN
+    # ==========================================
+
     def process_tap_in(self, event):
 
         card = self.cards.get(event.card_id)
@@ -84,7 +109,7 @@ class EventProcessor:
                 self.reject(event, "CARD_BLOCKED")
                 return
 
-        # Close previous unclosed journey
+        # Handle an existing open journey
         if card.active_journey is not None:
 
             old = card.active_journey
@@ -101,15 +126,33 @@ class EventProcessor:
                 card,
                 MAXIMUM_FARE,
                 event.timestamp,
-                old.entry_station.station_id,
+                station.station_id,
                 "MISMATCH_PENALTY"
             )
 
             self.journeys.append(old)
             card.active_journey = None
 
-        # Minimum balance check
-        if card.card_type != "TOURIST_PASS":
+            print("MISMATCH PENALTY: Rs 55")
+
+            self.process_auto_reload(card, event.timestamp)
+
+        # Tourist pass validation
+        if card.card_type == "TOURIST_PASS":
+
+            if card.pass_start_date is None:
+                try:
+                    card.activate_tourist_pass(event.timestamp)
+                except ValueError:
+                    self.reject(event, "TOURIST_PASS_NOT_PURCHASED")
+                    return
+
+            elif not card.is_tourist_pass_valid(event.timestamp):
+                self.reject(event, "TOURIST_PASS_EXPIRED")
+                return
+
+        # Minimum balance check for other cards
+        else:
 
             if card.balance <= 0:
                 self.reject(event, "NEGATIVE_BALANCE")
@@ -132,7 +175,10 @@ class EventProcessor:
             f"TAP IN SUCCESS: {card.card_id} at {station.station_name}"
         )
 
-    # STEP 15: TAP OUT
+    # ==========================================
+    # TAP OUT
+    # ==========================================
+
     def process_tap_out(self, event):
 
         card = self.cards.get(event.card_id)
@@ -180,37 +226,46 @@ class EventProcessor:
             self.reject(event, "INVALID_TIMESTAMP")
             return
 
-        journey.exit_station = station
-        journey.exit_time = event.timestamp
+        # Validate tourist pass at tap-out
+        if card.card_type == "TOURIST_PASS":
 
-        # Same station
-        if entry.station_id == station.station_id:
+            if not card.is_tourist_pass_valid(event.timestamp):
+                self.reject(event, "TOURIST_PASS_EXPIRED")
+                return
 
-            duration = event.timestamp - entry_time
-
-            if duration.total_seconds() <= 900:
-                fare = Decimal("0")
-            else:
-                fare = Decimal("20")
-
+            fare = Decimal("0")
             penalty = Decimal("0")
 
         else:
 
-            fare = calculate_journey_fare(
-                entry.zone,
-                station.zone,
-                card.card_type,
-                entry_time,
-                self.holidays
-            )
+            # Same station
+            if entry.station_id == station.station_id:
 
-            penalty = calculate_penalty(
-                entry.zone,
-                station.zone,
-                entry_time,
-                event.timestamp
-            )
+                duration = event.timestamp - entry_time
+
+                if duration.total_seconds() <= 900:
+                    fare = Decimal("0")
+                else:
+                    fare = Decimal("20")
+
+                penalty = Decimal("0")
+
+            else:
+
+                fare = calculate_journey_fare(
+                    entry.zone,
+                    station.zone,
+                    card.card_type,
+                    entry_time,
+                    self.holidays
+                )
+
+                penalty = calculate_penalty(
+                    entry.zone,
+                    station.zone,
+                    entry_time,
+                    event.timestamp
+                )
 
         # Daily cap for STANDARD cards
         charge_date = event.timestamp.date()
@@ -231,7 +286,9 @@ class EventProcessor:
 
             card.daily_spending[charge_date] = spent + fare
 
-        # Save journey
+        # Save journey details
+        journey.exit_station = station
+        journey.exit_time = event.timestamp
         journey.fare = fare
         journey.penalty = penalty
         journey.status = "CLOSED"
@@ -247,7 +304,7 @@ class EventProcessor:
                 "FARE"
             )
 
-        # Deduct penalty separately
+        # Deduct penalty
         if penalty > 0:
 
             self.charge(
@@ -259,17 +316,24 @@ class EventProcessor:
             )
 
         self.journeys.append(journey)
+
         card.active_journey = None
 
-        print(f"TAP OUT SUCCESS: {card.card_id}")
-        print(f"Fare: Rs {fare}")
-        print(f"Penalty: Rs {penalty}")
-        print(f"Balance: Rs {card.balance}")
-
-        # Auto reload
         self.process_auto_reload(card, event.timestamp)
 
-    # STEP 16: AUTO RELOAD
+        print(
+            f"TAP OUT SUCCESS: {card.card_id}"
+        )
+
+        print(f"Fare: Rs {fare}")
+
+        if penalty > 0:
+            print(f"Penalty: Rs {penalty}")
+
+    # ==========================================
+    # AUTO RELOAD
+    # ==========================================
+
     def process_auto_reload(self, card, timestamp):
 
         if not card.auto_reload_enabled:
@@ -278,59 +342,41 @@ class EventProcessor:
         if card.balance >= Decimal("100"):
             return
 
-        today = timestamp.date()
+        reload_date = timestamp.date()
 
-        if card.reload_date != today:
-
-            card.reload_date = today
+        if card.reload_date != reload_date:
             card.reload_count = 0
+            card.reload_date = reload_date
 
         if card.reload_count >= 2:
-            print("AUTO RELOAD LIMIT REACHED")
             return
 
-        # Add Rs 500
+        # Add Rs 500 to card balance
         card.balance += AUTO_RELOAD_AMOUNT
 
         self.transactions.append(
             Transaction(
-                transaction_id=f"TXN{len(self.transactions)+1:05d}",
+                transaction_id=f"T{len(self.transactions) + 1:04d}",
                 card_id=card.card_id,
                 transaction_type="AUTO_RELOAD",
                 amount=AUTO_RELOAD_AMOUNT,
                 timestamp=timestamp,
+                station_id=None,
                 balance_after=card.balance
             )
         )
 
-        # Deduct Rs 5 fee
-        card.balance -= AUTO_RELOAD_FEE
-
-        self.transactions.append(
-            Transaction(
-                transaction_id=f"TXN{len(self.transactions)+1:05d}",
-                card_id=card.card_id,
-                transaction_type="RELOAD_FEE",
-                amount=AUTO_RELOAD_FEE,
-                timestamp=timestamp,
-                balance_after=card.balance
-            )
+        # Deduct Rs 5 reload fee
+        self.charge(
+            card,
+            AUTO_RELOAD_FEE,
+            timestamp,
+            None,
+            "RELOAD_FEE"
         )
 
         card.reload_count += 1
-        card.reload_date = today
 
-        print("AUTO RELOAD SUCCESS")
-        print(f"New balance: Rs {card.balance}")
-
-    # Process events
-    def process_event(self, event):
-
-        if event.event_type == "TAP_IN":
-            self.process_tap_in(event)
-
-        elif event.event_type == "TAP_OUT":
-            self.process_tap_out(event)
-
-        else:
-            self.reject(event, "INVALID_EVENT_TYPE")
+        print(
+            f"AUTO RELOAD SUCCESS: {card.card_id} - Rs 500"
+        )
